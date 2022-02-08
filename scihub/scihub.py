@@ -40,19 +40,19 @@ class SciHub(object):
         self.sess = requests.Session()
         self.sess.headers = HEADERS
         self.available_base_url_list = self._get_available_scihub_urls()
-        self.base_url = self.available_base_url_list[0] + '/'
+        self.base_url = f'{self.available_base_url_list[0]}/'
 
     def _get_available_scihub_urls(self):
         '''
         Finds available scihub urls via https://sci-hub.now.sh/
         '''
-        urls = []
         res = requests.get('https://sci-hub.now.sh/')
         s = self._get_soup(res.content)
-        for a in s.find_all('a', href=True):
-            if 'sci-hub.' in a['href']:
-                urls.append(a['href'])
-        return urls
+        return [
+            a['href']
+            for a in s.find_all('a', href=True)
+            if 'sci-hub.' in a['href']
+        ]
 
     def set_proxy(self, proxy):
         '''
@@ -69,7 +69,7 @@ class SciHub(object):
         if not self.available_base_url_list:
             raise Exception('Ran out of valid sci-hub urls')
         del self.available_base_url_list[0]
-        self.base_url = self.available_base_url_list[0] + '/'
+        self.base_url = f'{self.available_base_url_list[0]}/'
         logger.info("I'm changing to {}".format(self.available_base_url_list[0]))
 
     def search(self, query, limit=10, download=False):
@@ -128,9 +128,8 @@ class SciHub(object):
         """
         data = self.fetch(identifier)
 
-        if not 'err' in data:
-            self._save(data['pdf'],
-                       os.path.join(destination, path if path else data['name']))
+        if 'err' not in data:
+            self._save(data['pdf'], os.path.join(destination, path or data['name']))
 
         return data
 
@@ -151,23 +150,18 @@ class SciHub(object):
             # and verifying would work. will fix this later.
             res = self.sess.get(url, verify=False)
 
-            if res.headers['Content-Type'] != 'application/pdf':
-                self._change_base_url()
-                logger.info('Failed to fetch pdf with identifier %s '
-                                           '(resolved url %s) due to captcha' % (identifier, url))
-                raise CaptchaNeedException('Failed to fetch pdf with identifier %s '
-                                           '(resolved url %s) due to captcha' % (identifier, url))
-                # return {
-                #     'err': 'Failed to fetch pdf with identifier %s (resolved url %s) due to captcha'
-                #            % (identifier, url)
-                # }
-            else:
+            if res.headers['Content-Type'] == 'application/pdf':
                 return {
                     'pdf': res.content,
                     'url': url,
                     'name': self._generate_name(res)
                 }
 
+            self._change_base_url()
+            logger.info('Failed to fetch pdf with identifier %s '
+                                       '(resolved url %s) due to captcha' % (identifier, url))
+            raise CaptchaNeedException('Failed to fetch pdf with identifier %s '
+                                       '(resolved url %s) due to captcha' % (identifier, url))
         except requests.exceptions.ConnectionError:
             logger.info('Cannot access {}, changing url'.format(self.available_base_url_list[0]))
             self._change_base_url()
@@ -196,8 +190,7 @@ class SciHub(object):
         """
         res = self.sess.get(self.base_url + identifier, verify=False)
         s = self._get_soup(res.content)
-        iframe = s.find('iframe')
-        if iframe:
+        if iframe := s.find('iframe'):
             return iframe.get('src') if not iframe.get('src').startswith('//') \
                 else 'http:' + iframe.get('src')
 
@@ -210,10 +203,7 @@ class SciHub(object):
         doi - digital object identifier
         """
         if (identifier.startswith('http') or identifier.startswith('https')):
-            if identifier.endswith('pdf'):
-                return 'url-direct'
-            else:
-                return 'url-non-direct'
+            return 'url-direct' if identifier.endswith('pdf') else 'url-non-direct'
         elif identifier.isdigit():
             return 'pmid'
         else:
